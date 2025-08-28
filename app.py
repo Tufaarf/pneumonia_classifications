@@ -9,12 +9,9 @@ import tensorflow as tf
 
 st.set_page_config(page_title="Pneumonia Classifier", page_icon="🩺", layout="centered")
 
-# =========================
-# Konfigurasi & utilitas
-# =========================
 IMG_SIZE = (224, 224)
-CLASS_NAMES = {0: "NORMAL", 1: "PNEUMONIA"}  # asumsi sama seperti flow_from_directory (alfabetis)
-DEFAULT_MODELS_DIR = "models"  # letakkan .h5 di sini agar terdeteksi otomatis
+CLASS_NAMES = {0: "NORMAL", 1: "PNEUMONIA"} 
+DEFAULT_MODELS_DIR = "models"  
 
 @st.cache_resource(show_spinner=False)
 def load_keras_model(model_path: str):
@@ -22,7 +19,7 @@ def load_keras_model(model_path: str):
     return model
 
 def preprocess_image(pil_img: Image.Image) -> np.ndarray:
-    """Resize -> array -> rescale (1/255) -> add batch dim"""
+
     img = pil_img.convert("RGB").resize(IMG_SIZE)
     arr = np.array(img).astype("float32") / 255.0
     arr = np.expand_dims(arr, axis=0)
@@ -30,7 +27,7 @@ def preprocess_image(pil_img: Image.Image) -> np.ndarray:
 
 def predict_single(model, pil_img: Image.Image) -> dict:
     x = preprocess_image(pil_img)
-    # output sigmoid -> probability kelas 1 (PNEUMONIA)
+
     prob_pneumonia = float(model.predict(x, verbose=0)[0][0])
     prob_normal = 1.0 - prob_pneumonia
     pred_idx = 1 if prob_pneumonia >= 0.5 else 0
@@ -41,28 +38,22 @@ def predict_single(model, pil_img: Image.Image) -> dict:
     }
 
 def list_models(dir_path: str):
-    """
-    Cari pola nama:
-    Model_Skenario _NOMOR___OPTIMIZER__R_TRAIN_RATIO_.h5
-    Contoh fleksibel: Model_Skenario_01__Adam__R_0.7_TRAIN_RATIO_.h5
-    """
+  
     if not os.path.isdir(dir_path):
         return []
     patterns = [
         os.path.join(dir_path, "Model_Skenario_*__*__R_*_TRAIN_RATIO_.h5"),
-        os.path.join(dir_path, "Model_Skenario*_*.h5"),  # fallback lebih longgar
-        os.path.join(dir_path, "*.h5"),                  # paling longgar
+        os.path.join(dir_path, "Model_Skenario*_*.h5"),  
+        os.path.join(dir_path, "*.h5"),             
     ]
     files = []
     for p in patterns:
         files.extend(glob.glob(p))
-    # unik & urut nama
+ 
     files = sorted(list(set(files)))
     return files
 
-# =========================
-# Sidebar: pilih / upload model
-# =========================
+
 st.sidebar.header("🔧 Model")
 available = list_models(DEFAULT_MODELS_DIR)
 
@@ -90,25 +81,20 @@ else:
     if up is not None:
         model_bytes = up.read()
 
-# Threshold prediksi
+
 threshold = st.sidebar.slider("Ambang (threshold) PNEUMONIA", 0.1, 0.9, 0.5, 0.05)
 
-# =========================
-# Header
-# =========================
 st.title("🩺 Pneumonia X-ray Classifier")
 st.caption("Memuat model Keras (.h5) dengan pola nama **Model_Skenario _NOMOR___OPTIMIZER__R_TRAIN_RATIO_.h5**")
 
-# =========================
-# Load model
-# =========================
+
 MODEL_OBJ = None
 
 if selected_model_path:
     with st.spinner(f"Memuat model: {os.path.basename(selected_model_path)}"):
         MODEL_OBJ = load_keras_model(selected_model_path)
 elif model_bytes:
-    # Simpan ke memori sementara agar Keras bisa load dari path-like object
+  
     tmp_path = "uploaded_model.h5"
     with open(tmp_path, "wb") as f:
         f.write(model_bytes)
@@ -119,9 +105,7 @@ if MODEL_OBJ is None:
     st.info("Pilih atau upload model terlebih dahulu di sidebar.")
     st.stop()
 
-# =========================
-# Bagian prediksi
-# =========================
+
 st.subheader("🖼️ Prediksi Gambar")
 mode = st.radio("Mode input:", ["Satu gambar", "Beberapa gambar"], horizontal=True)
 
@@ -135,7 +119,6 @@ if mode == "Satu gambar":
         with col2:
             with st.spinner("Mengklasifikasikan..."):
                 x = preprocess_image(pil)
-                # gunakan threshold dari sidebar
                 prob_pneu = float(MODEL_OBJ.predict(x, verbose=0)[0][0])
                 pred_idx = 1 if prob_pneu >= threshold else 0
                 label = CLASS_NAMES[pred_idx]
@@ -160,14 +143,11 @@ else:
             pred_idx = 1 if prob_pneu >= threshold else 0
             label = CLASS_NAMES[pred_idx]
             results.append((f.name, label, prob_pneu, 1.0 - prob_pneu))
-        # Tampilkan ringkas
+   
         st.write("### Hasil")
         for name, label, p_pneu, p_norm in results:
             st.write(f"- **{name}** → **{label}**  |  P(PNEUMONIA) = `{p_pneu:.3f}`  •  P(NORMAL) = `{p_norm:.3f}`")
 
-# =========================
-# Info model
-# =========================
 with st.expander("ℹ️ Info Model"):
     if selected_model_path:
         st.write(f"**Path model:** `{selected_model_path}`")
