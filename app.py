@@ -106,7 +106,7 @@ if mode == "Satu gambar":
         col1, col2 = st.columns([1, 1.2])
 
         with col1:
-            st.image(pil_image, caption="Gambar Input", use_column_width=True)
+            st.image(pil_image, caption="Gambar Input", use_container_width=True)
 
         with col2:
             with st.spinner("Mengklasifikasikan..."):
