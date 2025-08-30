@@ -1,110 +1,100 @@
-# app.py
 import os
 import io
 import glob
 import numpy as np
+import pandas as pd
 from PIL import Image
 import streamlit as st
 import tensorflow as tf
 
 st.set_page_config(page_title="Pneumonia Classifier", page_icon="🩺", layout="centered")
 
+# --- Konfigurasi Utama ---
 IMG_SIZE = (224, 224)
-CLASS_NAMES = {0: "NORMAL", 1: "PNEUMONIA"} 
-DEFAULT_MODELS_DIR = "models"  
 
-@st.cache_resource(show_spinner=False)
+# --- PERBAIKAN FINAL ---
+# Mengembalikan urutan label sesuai dengan urutan abjad folder
+# yang dipelajari oleh Keras saat training.
+# 'NORMAL' -> 0, 'PNEUMONIA BACTERI' -> 1, 'PNEUMONIA VIRUS' -> 2
+CLASS_NAMES = {0: "NORMAL", 1: "PNEUMONIA BACTERI", 2: "PNEUMONIA VIRUS"}
+
+DEFAULT_MODELS_DIR = "models"
+
+# --- Fungsi-Fungsi Helper ---
+
+@st.cache_resource(show_spinner="Memuat model Keras...")
 def load_keras_model(model_path: str):
-    model = tf.keras.models.load_model(model_path)
-    return model
+    """Memuat model Keras dari path file."""
+    try:
+        # Muat model tanpa kompilasi untuk mempercepat inferensi
+        model = tf.keras.models.load_model(model_path, compile=False)
+        return model
+    except Exception as e:
+        st.error(f"Gagal memuat model: {e}")
+        return None
 
 def preprocess_image(pil_img: Image.Image) -> np.ndarray:
-
+    """Melakukan preprocessing pada gambar PIL untuk input model."""
     img = pil_img.convert("RGB").resize(IMG_SIZE)
     arr = np.array(img).astype("float32") / 255.0
-    arr = np.expand_dims(arr, axis=0)
+    arr = np.expand_dims(arr, axis=0)  # Menambah dimensi batch
     return arr
 
-def predict_single(model, pil_img: Image.Image) -> dict:
-    x = preprocess_image(pil_img)
-
-    prob_pneumonia = float(model.predict(x, verbose=0)[0][0])
-    prob_normal = 1.0 - prob_pneumonia
-    pred_idx = 1 if prob_pneumonia >= 0.5 else 0
-    return {
-        "pred_label": CLASS_NAMES[pred_idx],
-        "prob_pneumonia": prob_pneumonia,
-        "prob_normal": prob_normal
-    }
-
-def list_models(dir_path: str):
-  
+def list_models(dir_path: str) -> list:
+    """Mencari file model .h5 atau .keras di direktori yang diberikan."""
     if not os.path.isdir(dir_path):
         return []
     patterns = [
-        os.path.join(dir_path, "Model_Skenario_*__*__R_*_TRAIN_RATIO_.h5"),
-        os.path.join(dir_path, "Model_Skenario*_*.h5"),  
-        os.path.join(dir_path, "*.h5"),             
+        os.path.join(dir_path, "*.h5"),
+        os.path.join(dir_path, "*.keras"),
     ]
     files = []
     for p in patterns:
         files.extend(glob.glob(p))
- 
-    files = sorted(list(set(files)))
-    return files
+    return sorted(list(set(files)))
 
-
-st.sidebar.header("🔧 Model")
-available = list_models(DEFAULT_MODELS_DIR)
+# --- UI Sidebar ---
+st.sidebar.header("🔧 Pengaturan Model")
+available_models = list_models(DEFAULT_MODELS_DIR)
 
 model_source = st.sidebar.radio(
-    "Sumber model (.h5):",
-    ["Pilih dari folder 'models/'", "Upload file .h5"],
-    index=0 if available else 1,
+    "Sumber model:",
+    ["Pilih dari folder 'models/'", "Upload file model"],
+    index=0 if available_models else 1,
+    help="Pilih model yang sudah ada atau unggah file .h5 atau .keras Anda sendiri."
 )
 
-model_bytes = None
+MODEL_OBJ = None
 selected_model_path = None
 
 if model_source == "Pilih dari folder 'models/'":
-    if not available:
-        st.sidebar.warning("Tidak ada file .h5 di folder 'models/'. Gunakan opsi upload.")
+    if not available_models:
+        st.sidebar.warning(f"Tidak ada file model di folder '{DEFAULT_MODELS_DIR}/'. Silakan gunakan opsi upload.")
     else:
         selected_model_path = st.sidebar.selectbox(
             "Pilih file model:",
-            available,
+            available_models,
             index=0,
             format_func=lambda p: os.path.basename(p),
         )
+        if selected_model_path:
+            MODEL_OBJ = load_keras_model(selected_model_path)
 else:
-    up = st.sidebar.file_uploader("Upload file model (.h5)", type=["h5"])
-    if up is not None:
-        model_bytes = up.read()
+    uploaded_file = st.sidebar.file_uploader("Upload file model (.h5 atau .keras)", type=["h5", "keras"])
+    if uploaded_file is not None:
+        temp_model_path = os.path.join(".", uploaded_file.name)
+        with open(temp_model_path, "wb") as f:
+            f.write(uploaded_file.getvalue())
+        MODEL_OBJ = load_keras_model(temp_model_path)
+        selected_model_path = temp_model_path
 
-
-threshold = st.sidebar.slider("Ambang (threshold) PNEUMONIA", 0.1, 0.9, 0.5, 0.05)
-
-st.title("🩺 Pneumonia X-ray Classifier")
-st.caption("Memuat model Keras (.h5) dengan pola nama **Model_Skenario _NOMOR___OPTIMIZER__R_TRAIN_RATIO_.h5**")
-
-
-MODEL_OBJ = None
-
-if selected_model_path:
-    with st.spinner(f"Memuat model: {os.path.basename(selected_model_path)}"):
-        MODEL_OBJ = load_keras_model(selected_model_path)
-elif model_bytes:
-  
-    tmp_path = "uploaded_model.h5"
-    with open(tmp_path, "wb") as f:
-        f.write(model_bytes)
-    with st.spinner("Memuat model ter-upload..."):
-        MODEL_OBJ = load_keras_model(tmp_path)
+# --- UI Utama ---
+st.title("🩺 Klasifikasi Pneumonia dari Citra X-ray")
+st.caption("Aplikasi ini mengklasifikasikan citra X-ray dada ke dalam 3 kategori: Normal, Pneumonia Bakteri, atau Pneumonia Virus.")
 
 if MODEL_OBJ is None:
-    st.info("Pilih atau upload model terlebih dahulu di sidebar.")
+    st.info("Silakan pilih atau upload model yang valid di sidebar untuk memulai.")
     st.stop()
-
 
 st.subheader("🖼️ Prediksi Gambar")
 mode = st.radio("Mode input:", ["Satu gambar", "Beberapa gambar"], horizontal=True)
@@ -112,50 +102,79 @@ mode = st.radio("Mode input:", ["Satu gambar", "Beberapa gambar"], horizontal=Tr
 if mode == "Satu gambar":
     img_file = st.file_uploader("Upload 1 gambar X-ray (jpg/png)", type=["jpg", "jpeg", "png"])
     if img_file:
-        pil = Image.open(img_file)
-        col1, col2 = st.columns([1, 1])
+        pil_image = Image.open(img_file)
+        col1, col2 = st.columns([1, 1.2])
+
         with col1:
-            st.image(pil, caption="Input", use_container_width=True)
+            st.image(pil_image, caption="Gambar Input", use_column_width=True)
+
         with col2:
             with st.spinner("Mengklasifikasikan..."):
-                x = preprocess_image(pil)
-                prob_pneu = float(MODEL_OBJ.predict(x, verbose=0)[0][0])
-                pred_idx = 1 if prob_pneu >= threshold else 0
-                label = CLASS_NAMES[pred_idx]
+                processed_img = preprocess_image(pil_image)
+                probabilities = MODEL_OBJ.predict(processed_img, verbose=0)[0]
+                
+                pred_idx = np.argmax(probabilities)
+                pred_label = CLASS_NAMES[pred_idx]
+                confidence = probabilities[pred_idx]
+
                 st.metric(
-                    "Prediksi",
-                    value=label,
-                    delta=f"P(PNEUMONIA) = {prob_pneu:.3f}",
-                    help=f"Threshold: {threshold:.2f} → {'PNEUMONIA' if prob_pneu>=threshold else 'NORMAL'}",
+                    label="Hasil Prediksi",
+                    value=pred_label,
+                    help=f"Model memprediksi gambar ini sebagai '{pred_label}' dengan tingkat kepercayaan {confidence:.2%}.",
                 )
-                st.progress(min(max(prob_pneu, 0.0), 1.0), text="Probabilitas PNEUMONIA")
-                st.write(
-                    f"**P(NORMAL)**: `{1.0 - prob_pneu:.3f}`  •  **P(PNEUMONIA)**: `{prob_pneu:.3f}`"
-                )
-else:
+                
+                st.write("**Tingkat Kepercayaan:**")
+                st.progress(float(confidence), text=f"{confidence:.2%}")
+                
+                st.write("**Probabilitas per Kelas:**")
+                prob_df = pd.DataFrame({
+                    'Kelas': [CLASS_NAMES[i] for i in range(len(CLASS_NAMES))],
+                    'Probabilitas': probabilities
+                })
+                st.bar_chart(prob_df.set_index('Kelas'))
+else: 
     img_files = st.file_uploader("Upload beberapa gambar (jpg/png)", accept_multiple_files=True, type=["jpg", "jpeg", "png"])
     if img_files:
         results = []
-        for f in img_files:
-            pil = Image.open(f).convert("RGB")
-            x = preprocess_image(pil)
-            prob_pneu = float(MODEL_OBJ.predict(x, verbose=0)[0][0])
-            pred_idx = 1 if prob_pneu >= threshold else 0
+        progress_bar = st.progress(0, text="Memproses gambar...")
+        for i, f in enumerate(img_files):
+            pil_image = Image.open(f).convert("RGB")
+            processed_img = preprocess_image(pil_image)
+            
+            probabilities = MODEL_OBJ.predict(processed_img, verbose=0)[0]
+            pred_idx = np.argmax(probabilities)
             label = CLASS_NAMES[pred_idx]
-            results.append((f.name, label, prob_pneu, 1.0 - prob_pneu))
-   
-        st.write("### Hasil")
-        for name, label, p_pneu, p_norm in results:
-            st.write(f"- **{name}** → **{label}**  |  P(PNEUMONIA) = `{p_pneu:.3f}`  •  P(NORMAL) = `{p_norm:.3f}`")
+            confidence = probabilities[pred_idx]
 
-with st.expander("ℹ️ Info Model"):
+            results.append((f.name, label, confidence, pil_image))
+            progress_bar.progress((i + 1) / len(img_files), text=f"Memproses {f.name}...")
+        
+        progress_bar.empty()
+        st.success(f"Selesai memproses {len(img_files)} gambar!")
+
+        st.write("---")
+        st.write("### Hasil Prediksi Batch")
+        for name, label, conf, img in results:
+            col1, col2 = st.columns([1, 3])
+            with col1:
+                st.image(img, width=100)
+            with col2:
+                st.write(f"**File:** `{name}`")
+                st.write(f"**Prediksi:** **{label}** (Kepercayaan: `{conf:.2%}`)")
+            st.write("---")
+
+with st.expander("ℹ️ Tampilkan Info Model"):
     if selected_model_path:
-        st.write(f"**Path model:** `{selected_model_path}`")
+        st.write(f"**Path model:** `{os.path.basename(selected_model_path)}`")
     else:
         st.write("**Model di-upload dari file uploader.**")
+    
+    summary_lines = []
     try:
-        MODEL_OBJ.summary(print_fn=lambda x: st.text(x))
+        MODEL_OBJ.summary(print_fn=lambda x: summary_lines.append(x))
+        st.text("\n".join(summary_lines))
     except Exception:
-        st.write("Ringkasan model tidak tersedia (beberapa model terserialisasi tanpa arsitektur lengkap).")
+        st.write("Tidak dapat menampilkan ringkasan model.")
 
-st.caption("Catatan: Preprocessing mengikuti training (resize 224×224, skala 1/255, sigmoid). Label diasumsikan {0: NORMAL, 1: PNEUMONIA}.")
+st.caption("Catatan: Preprocessing gambar mencakup resize ke 224x224, konversi ke RGB, dan penskalaan piksel ke rentang [0, 1].")
+
